@@ -168,7 +168,8 @@ jobs:
           mongo_data:
           rabbitmq_data:
         EOF
-
+    - name: Ensure Docker is running
+      run: docker info
     - name: Pull và start services
       run: |
         docker compose -f docker-compose.prod.yml pull
