@@ -171,10 +171,10 @@ jobs:
 
     - name: Pull và start services
       run: |
-        docker-compose -f docker-compose.prod.yml pull
-        docker-compose -f docker-compose.prod.yml up -d
+        docker compose -f docker-compose.prod.yml pull
+        docker compose -f docker-compose.prod.yml up -d
         sleep 20
-        docker-compose -f docker-compose.prod.yml ps
+        docker compose -f docker-compose.prod.yml ps
 
     - name: Test services
       run: |
@@ -185,4 +185,4 @@ jobs:
 
     - name: Cleanup
       if: always()
-      run: docker-compose -f docker-compose.prod.yml down
+      run: docker compose -f docker-compose.prod.yml down
