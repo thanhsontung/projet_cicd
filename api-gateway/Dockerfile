@@ -17,3 +17,5 @@ EXPOSE 3003
 
 # Set the command to start the app
 CMD [ "npm", "start" ]
+
+# Define volumes for persistent data storage
