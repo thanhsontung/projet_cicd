@@ -12,7 +12,7 @@ class App {
     this.setMiddlewares();
     this.setRoutes();
     this.setupMessageBroker();
-  }
+    }
 
   async connectDB() {
     await mongoose.connect(config.mongoURI, {
