@@ -36,9 +36,9 @@ jobs:
         cache: 'npm'
         cache-dependency-path: ${{ matrix.service }}/package-lock.json
 
-    - name: Install dependencies
+    - name: Install dependencies (include devDependencies)
       working-directory: ./${{ matrix.service }}
-      run: npm ci
+      run: npm ci --include=dev || npm ci
 
     - name: Ensure test dev-deps present (chai, chai-http)
       working-directory: ./${{ matrix.service }}
@@ -73,12 +73,13 @@ jobs:
     - name: Wait for MongoDB and RabbitMQ to be ready
       run: |
         echo "Waiting for MongoDB (27017) and RabbitMQ (5672) to accept connections..."
-        timeout=120
+        timeout=180
         interval=2
         elapsed=0
 
         check_ports() {
-          nc -z localhost 27017 >/dev/null 2>&1 && nc -z localhost 5672 >/dev/null 2>&1
+          # Check AMQP port and management port to ensure RabbitMQ is fully up
+          nc -z localhost 27017 >/dev/null 2>&1 && nc -z localhost 5672 >/dev/null 2>&1 && nc -z localhost 15672 >/dev/null 2>&1
         }
 
         while [ $elapsed -lt $timeout ]; do
@@ -100,7 +101,7 @@ jobs:
       env:
         NODE_ENV: test
         MONGODB_URL: "mongodb://localhost:27017/test"
-        RABBITMQ_URL: "amqp://rabbitmq:5672"
+        RABBITMQ_URL: "amqp://localhost:5672"
       run: |
         echo "MONGODB_URL=$MONGODB_URL"
         echo "RABBITMQ_URL=$RABBITMQ_URL"
