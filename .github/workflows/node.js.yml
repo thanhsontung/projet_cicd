@@ -21,6 +21,11 @@ jobs:
         ports:
           - 5672:5672
 
+    strategy:
+      matrix:
+        service: [auth, order, product, api-gateway]
+        node-version: [20.x]
+
     steps:
     - uses: actions/checkout@v4
     
