@@ -27,14 +27,15 @@ jobs:
         ports:
           - 5672:5672
           - 15672:15672
-        options: >-
-          --health-cmd "rabbitmq-diagnostics -q ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-          --health-start-period 30s
         env:
-          RABBITMQ_NODENAME: rabbit@localhost
+          RABBITMQ_DEFAULT_USER: guest
+          RABBITMQ_DEFAULT_PASS: guest
+        options: >-
+          --health-cmd "rabbitmqctl status"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 10
+          --health-start-period 40s
 
     strategy:
       matrix:
@@ -130,7 +131,16 @@ jobs:
       run: |
         echo "MONGODB_URL=$MONGODB_URL"
         echo "RABBITMQ_URL=$RABBITMQ_URL"
-        npm test
+        # Wait for RabbitMQ to be fully ready
+        sleep 15
+        # Try to connect multiple times
+        for i in {1..5}; do
+          echo "Attempt $i: Running tests..."
+          npm test && exit 0
+          echo "Test failed, waiting 5 seconds before retry..."
+          sleep 5
+        done
+        exit 1
     - name: Build
       working-directory: ./${{ matrix.service }}
       run: npm run build --if-present
