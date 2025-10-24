@@ -91,23 +91,34 @@ jobs:
         echo "MongoDB ports:"
         ss -ltn | grep 27017 || true
         echo "MongoDB status:"
-        mongosh --eval "db.serverStatus()" || true
+        docker exec $(docker ps -q -f name=mongo) mongosh --eval "db.runCommand({ ping: 1 })" || true
         
         echo -e "\n=== Checking RabbitMQ ==="
         echo "RabbitMQ ports:"
         ss -ltn | grep 5672 || true
         ss -ltn | grep 15672 || true
         echo "RabbitMQ status:"
-        rabbitmqctl status || true
+        docker exec $(docker ps -q -f name=rabbitmq) rabbitmqctl status || true
         
         echo -e "\n=== Docker Status ==="
         docker ps
         
         # Verify connections work
         echo -e "\n=== Testing Connections ==="
-        timeout 5 bash -c 'until mongosh --eval "db.runCommand({ ping: 1 })" >/dev/null 2>&1; do sleep 1; done'
+        # Test MongoDB connection through Docker
+        timeout 30 bash -c '
+        until docker exec $(docker ps -q -f name=mongo) mongosh --eval "db.runCommand({ ping: 1 })" >/dev/null 2>&1; do 
+          echo "Waiting for MongoDB..."
+          sleep 2
+        done'
         echo "✓ MongoDB accepting connections"
-        timeout 5 bash -c 'until rabbitmqctl ping >/dev/null 2>&1; do sleep 1; done'
+        
+        # Test RabbitMQ connection through Docker
+        timeout 30 bash -c '
+        until docker exec $(docker ps -q -f name=rabbitmq) rabbitmqctl ping >/dev/null 2>&1; do
+          echo "Waiting for RabbitMQ..."
+          sleep 2
+        done'
         echo "✓ RabbitMQ accepting connections"
 
     - name: Run tests
