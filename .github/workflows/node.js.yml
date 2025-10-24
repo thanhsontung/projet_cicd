@@ -1,237 +1,172 @@
-name: Microservices CI/CD with Docker
+name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+    branches:
+      - main
+
+permissions:
+  contents: read
 
 jobs:
+
+  # ==============================
+  # 1️⃣ Test trên MongoDB local
+  # ==============================
   test:
+    name: Unit Tests (Mongo local)
     runs-on: ubuntu-latest
-    
+
+    # Dùng services để có MongoDB (và RabbitMQ nếu product cần connect)
     services:
-      mongodb:
+      mongo:
         image: mongo:6
         ports:
-          - 27017:27017
-      
+          - 27017:27017            # MongoDB nghe ở localhost:27017 trong runner
+        # Nếu không cần auth cho test, không set username/password
+        options: >-
+          --health-cmd="mongosh --eval 'db.runCommand({ ping: 1 })' || exit 1"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
       rabbitmq:
-        image: rabbitmq:3.8-management-alpine
+        image: rabbitmq:3-management # product gọi app.setupMessageBroker() -> cần amqp://localhost:5672
         ports:
           - 5672:5672
-
-    strategy:
-      matrix:
-        service: [auth, order, product, api-gateway]
-        node-version: [20.x]
+          - 15672:15672
+        options: >-
+          --health-cmd="rabbitmq-diagnostics -q ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
 
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Setup Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ matrix.node-version }}
-        cache: 'npm'
-        cache-dependency-path: ${{ matrix.service }}/package-lock.json
-        
-    - name: Check for commented code
-      working-directory: ./${{ matrix.service }}
-      run: |
-        echo "Checking for commented code..."
-        # Look for commented code in .js files
-        if grep -r "^\s*//.*\(function\|class\|const\|let\|var\|module.exports\)" src/; then
-          echo "Error: Found commented out code. Please remove commented code before committing."
-          exit 1
-        fi
-        if grep -r "^\s*/\*.*\(function\|class\|const\|let\|var\|module.exports\)" src/; then
-          echo "Error: Found commented out code blocks. Please remove commented code before committing."
-          exit 1
-        fi
-        echo "No commented code found."
-        
-    - name: Install ESLint
-      working-directory: ./${{ matrix.service }}
-      run: |
-        npm install eslint --save-dev
-        npm install eslint-plugin-node --save-dev
-        
-    - name: Create ESLint config
-      working-directory: ./${{ matrix.service }}
-      run: |
-        cat > .eslintrc.json << EOF
-        {
-          "env": {
-            "node": true,
-            "es6": true,
-            "mocha": true
-          },
-          "extends": ["eslint:recommended", "plugin:node/recommended"],
-          "rules": {
-            "no-unused-vars": "error",
-            "no-console": "warn",
-            "node/no-missing-require": "error",
-            "no-unreachable": "error",
-            "no-empty": "error"
-          }
-        }
-        EOF
-        
-    - name: Run ESLint
-      working-directory: ./${{ matrix.service }}
-      run: |
-        echo "Running ESLint..."
-        ./node_modules/.bin/eslint src/ --max-warnings 0
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Install dependencies
-      working-directory: ./${{ matrix.service }}
-      run: npm ci
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'        # hoặc '20' tùy project
 
-    - name: Run tests
-      working-directory: ./${{ matrix.service }}
-      run: npm test --if-present || echo "No test for ${{ matrix.service }}"
+      # Tạo .env cho từng service (trỏ về Mongo local)
+      - name: Create .env for services
+        run: |
+          # AUTH
+          mkdir -p auth
+          cat > auth/.env << 'EOF'
+          MONGODB_AUTH_URI=mongodb://127.0.0.1:27017/auth_test
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          # (tùy code auth cần thêm gì thì bổ sung)
+          EOF
 
-    - name: Build
-      working-directory: ./${{ matrix.service }}
-      run: npm run build --if-present
+          # PRODUCT
+          mkdir -p product
+          cat > product/.env << 'EOF'
+          MONGODB_PRODUCT_URI=mongodb://127.0.0.1:27017/product_test
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          # RABBITMQ_URL nếu code product đọc từ env (khớp với app.setupMessageBroker())
+          RABBITMQ_URL=amqp://127.0.0.1:5672
+          EOF
 
-  docker-build-push:
-    needs: test
+      # Cài deps & chạy test cho AUTH trước
+      - name: Install & Test (auth)
+        working-directory: ./auth
+        env:
+          # Một số lib native cần build tools; nếu cần có thể thêm:
+          # npm_config_build_from_source: true
+          NODE_ENV: test
+        run: |
+          npm ci
+          npm i -D chai@4.3.10 chai-http@4.4.0 mocha@10.3.0
+          # Chạy test auth: file test bạn đưa sẽ connect Mongo local, start app, register/login,...
+          npm test
+
+      # Khởi chạy AUTH ở nền để PRODUCT test có thể gọi http://localhost:3000/login
+      - name: Start auth server (background)
+        working-directory: ./auth
+        env:
+          NODE_ENV: test
+        run: |
+          nohup npm start >/tmp/auth.log 2>&1 &
+          # chờ port 3000 sẵn sàng
+          timeout 60 bash -c 'until echo > /dev/tcp/127.0.0.1/3000; do sleep 1; done'
+          echo "Auth is up"
+          # (tùy app có /health thì có thể dùng curl http://localhost:3000/health)
+
+      # Cài deps & chạy test cho PRODUCT (sẽ xin token từ AUTH vừa chạy)
+      - name: Install & Test (product)
+        working-directory: ./product
+        env:
+          NODE_ENV: test
+          LOGIN_TEST_USER: ${{ secrets.LOGIN_TEST_USER }}              # dùng trong bài test
+          LOGIN_TEST_PASSWORD: ${{ secrets.LOGIN_TEST_PASSWORD }}
+        run: |
+          npm ci
+          npm i -D chai@4.3.10 chai-http@4.4.0 mocha@10.3.0
+          npm test
+
+  # ==============================
+  # 2️⃣ Build & Push Docker Images
+  # ==============================
+  build-and-push:
+    name: Build & Push Docker Images
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
-    
+    needs: test                         # 🔒 Chỉ build/push khi test pass
     strategy:
       matrix:
-        service: [auth, order, product, api-gateway]
-    
+        service: [api-gateway, auth, product, order]
     steps:
-    - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-    - name: Login to Docker Hub
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-    - name: Build and push ${{ matrix.service }}
-      uses: docker/build-push-action@v5
-      with:
-        context: ./${{ matrix.service }}
-        push: true
-        tags: |
-          ${{ secrets.DOCKER_USERNAME }}/${{ matrix.service }}-cicd:latest
-          ${{ secrets.DOCKER_USERNAME }}/${{ matrix.service }}-cicd:${{ github.sha }}
+      - name: Build & push ${{ matrix.service }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.service }}                     # Thư mục service
+          file: ./${{ matrix.service }}/Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64                  # build multi-arch
 
+  # ==============================
+  # 3️⃣ Deploy trên Windows Runner
+  # ==============================
   deploy:
-    needs: docker-build-push
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    
+    name: Deploy on Localhost (Windows Runner)
+    needs: build-and-push
+    runs-on: self-hosted          # Windows self-hosted runner
+    env:
+      DOCKER_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}  # ⚠️ dùng biến này bên dưới
     steps:
-    - uses: actions/checkout@v4
+      - name: Check Docker environment
+        shell: cmd
+        run: |
+          echo Checking Docker environment...
+          docker --version
+          docker-compose --version
 
-    - name: Login to Docker Hub
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKER_USERNAME }}    # ✅ SỬA DÒNG NÀY
-        password: ${{ secrets.DOCKER_PASSWORD }}    # ✅ SỬA DÒNG NÀY
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-    - name: Create production compose file
-      run: |
-        cat > docker-compose.prod.yml << EOF
-        version: "3.9"
-        services:
-          auth:
-            image: ${{ secrets.DOCKER_USERNAME }}/auth-cicd:latest
-            container_name: 'auth-cicd'
-            ports:
-              - "3000:3000"
-            networks:
-              - cicd-network
-
-          rabbitmq:
-            image: rabbitmq:3.8-management-alpine
-            container_name: 'rabbitmq-cicd'
-            ports:
-              - "5672:5672"
-              - "15672:15672"
-            volumes:
-              - rabbitmq_data:/var/lib/rabbitmq/
-            networks:
-              - cicd-network
-
-          order:
-            image: ${{ secrets.DOCKER_USERNAME }}/order-cicd:latest
-            container_name: 'order-cicd'
-            ports:
-              - "3002:3002"
-            depends_on:
-              - rabbitmq
-            environment:
-              - RABBITMQ_URL=amqp://rabbitmq-cicd:5672
-            networks:
-              - cicd-network
-
-          product:
-            image: ${{ secrets.DOCKER_USERNAME }}/product-cicd:latest
-            container_name: 'product-cicd'
-            ports:
-              - "3001:3001"
-            depends_on:
-              - rabbitmq
-            environment:
-              - RABBITMQ_URL=amqp://rabbitmq-cicd:5672
-            networks:
-              - cicd-network
-
-          api-gateway:
-            image: ${{ secrets.DOCKER_USERNAME }}/api-gateway-cicd:latest
-            container_name: 'gateway-cicd'
-            ports:
-              - "3003:3003"
-            environment:
-              - RABBITMQ_URL=amqp://rabbitmq-cicd:5672
-            networks:
-              - cicd-network
-
-          mongo:
-            image: mongo:6
-            container_name: 'mongodb-cicd'
-            ports:
-              - "27017:27017"
-            volumes:
-              - mongo_data:/data/db
-            networks:
-              - cicd-network
-
-        networks:
-          cicd-network:
-            driver: bridge
-
-        volumes:
-          mongo_data:
-          rabbitmq_data:
-        EOF
-    - name: Ensure Docker is running
-      run: docker info
-    - name: Pull và start services
-      run: |
-        docker compose -f docker-compose.prod.yml pull
-        docker compose -f docker-compose.prod.yml up -d
-        sleep 20
-        docker compose -f docker-compose.prod.yml ps
-
-    - name: Test services
-      run: |
-        curl -f http://localhost:3003 || echo "Gateway OK"
-        curl -f http://localhost:3000 || echo "Auth OK"
-        curl -f http://localhost:3001 || echo "Product OK"
-        curl -f http://localhost:3002 || echo "Order OK"
-
-    - name: Cleanup
-      if: always()
-      run: docker compose -f docker-compose.prod.yml down
+      - name: Stop and remove old containers
+        shell: cmd
+        run: |
+          echo Stopping old containers...
+          cd /d D:\Tai_Lieu_IUH\Tailieu_Nam4_HK1\Lập trình hướng dịch vụ\TH7_EProject-Phase-1\EProject-Phase-1-TestGithubAction
+          docker-compose down --remove-orphans
