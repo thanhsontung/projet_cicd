@@ -53,24 +53,34 @@ jobs:
       working-directory: ./${{ matrix.service }}
       run: npm ci
 
-    - name: Run linting
+    - name: Run linting (fail on errors and warnings)
       working-directory: ./${{ matrix.service }}
-      run: npm run lint --if-present
-      continue-on-error: true
-
-    - name: Install Mocha globally
-      run: npm install -g mocha
+      run: |
+        # If the service defines a lint script, run it (and fail on non-zero exit).
+        # Otherwise, if eslint is listed as a dependency/devDependency, run eslint and
+        # treat warnings as errors via --max-warnings=0.
+        if [ -f package.json ]; then
+          if grep -q '"lint"' package.json; then
+            npm run lint
+          elif grep -q '"eslint"' package.json; then
+            npx eslint . --ext .js --max-warnings=0
+          else
+            echo "No lint configured for ${{ matrix.service }}; skipping lint"
+          fi
+        else
+          echo "No package.json found in ${{ matrix.service }}; skipping lint"
+        fi
     - name: Run tests
       working-directory: ./${{ matrix.service }}
-      run: npm test
       env:
         NODE_ENV: test
-        MONGODB_URL: mongodb://localhost:27017/test
-        RABBITMQ_URL: amqp://rabbitmq:5672
-    - run: |
+        MONGODB_URL: "mongodb://localhost:27017/test"
+        RABBITMQ_URL: "amqp://rabbitmq:5672"
+      run: |
         echo "MONGO_URL=$MONGODB_URL"
         echo "RABBIT_URL=$RABBITMQ_URL"
         npm test
+
 
     - name: Build application
       working-directory: ./${{ matrix.service }}
