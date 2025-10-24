@@ -38,8 +38,17 @@ jobs:
           --health-start-period 40s
 
     strategy:
+      fail-fast: false
       matrix:
-        service: [auth, order, product, api-gateway]
+        include:
+          - service: auth
+            port: 3000
+          - service: product
+            port: 3001
+          - service: order
+            port: 3002
+          - service: api-gateway
+            port: 3003
         node-version: [20.x]
 
     steps:
@@ -54,22 +63,16 @@ jobs:
 
     - name: Install dependencies (include devDependencies)
       working-directory: ./${{ matrix.service }}
-      run: npm ci --include=dev || npm ci
+      run: |
+        echo "Installing dependencies for ${{ matrix.service }}"
+        npm ci --include=dev || npm ci
+        echo "Dependencies installed successfully"
 
-    - name: Ensure test dev-deps present (chai, chai-http)
+    - name: Install test dependencies
       working-directory: ./${{ matrix.service }}
       run: |
-        # Some runners or npm configs may skip devDependencies; ensure chai is available for tests.
-        if [ -f package.json ]; then
-          if ! npm ls chai >/dev/null 2>&1; then
-            echo "chai not found in node_modules — installing test devDependencies"
-            npm install chai chai-http --no-save
-          else
-            echo "chai present"
-          fi
-        else
-          echo "No package.json found; skipping test dep check"
-        fi
+        echo "Installing test dependencies for ${{ matrix.service }}"
+        npm install -D chai chai-http mocha @types/chai @types/mocha
 
     - name: Ensure mocha is available for tests
       working-directory: ./${{ matrix.service }}
@@ -122,44 +125,60 @@ jobs:
         done'
         echo "✓ RabbitMQ accepting connections"
 
+    - name: Verify MongoDB is ready
+      run: |
+        echo "Waiting for MongoDB to accept connections..."
+        timeout=30
+        while ! mongosh --eval "db.runCommand({ping: 1})" --quiet; do
+          sleep 1
+          timeout=$((timeout - 1))
+          if [ $timeout -le 0 ]; then
+            echo "Timed out waiting for MongoDB"
+            exit 1
+          fi
+        done
+        echo "MongoDB is ready"
+        
+    - name: Verify RabbitMQ is ready
+      run: |
+        echo "Waiting for RabbitMQ to accept connections..."
+        timeout=60
+        while ! curl -s -u guest:guest http://localhost:15672/api/aliveness-test/%2F | grep -q "ok"; do
+          sleep 2
+          timeout=$((timeout - 2))
+          if [ $timeout -le 0 ]; then
+            echo "Timed out waiting for RabbitMQ"
+            exit 1
+          fi
+        done
+        echo "RabbitMQ is ready"
+        
+        # Create test exchange and queues
+        curl -s -u guest:guest -X PUT http://localhost:15672/api/exchanges/%2F/test_exchange
+        curl -s -u guest:guest -X PUT http://localhost:15672/api/queues/%2F/test_queue
+        
     - name: Run tests
       working-directory: ./${{ matrix.service }}
       env:
         NODE_ENV: test
-        DEBUG: "*"
+        DEBUG: "app:*"
         MONGODB_URL: "mongodb://localhost:27017/test"
         RABBITMQ_URL: "amqp://guest:guest@localhost:5672"
+        TEST_MODE: "true"
       run: |
-        echo "Service: ${{ matrix.service }}"
-        echo "MONGODB_URL=$MONGODB_URL"
-        echo "RABBITMQ_URL=$RABBITMQ_URL"
+        echo "=== Running tests for ${{ matrix.service }} ==="
+        echo "Environment:"
+        echo "- NODE_ENV: $NODE_ENV"
+        echo "- MONGODB_URL: $MONGODB_URL"
+        echo "- RABBITMQ_URL: $RABBITMQ_URL"
         
-        echo "Checking RabbitMQ connection..."
-        curl -v -u guest:guest http://localhost:15672/api/overview || true
-        
-        echo "Waiting 30s for services to be fully ready..."
-        sleep 30
-        
-        # Try to connect multiple times with increasing delays
-        for i in {1..3}; do
-          echo "=== Attempt $i: Running tests... ==="
-          # Add more verbose logging for npm
-          NODE_DEBUG=* npm test && exit 0
-          
-          echo "Test failed on attempt $i"
-          echo "Docker containers status:"
-          docker ps
-          echo "RabbitMQ logs:"
-          docker logs $(docker ps -q -f name=rabbitmq) 2>&1 | tail -n 50
-          
-          # Increase wait time between retries
-          sleep_time=$((i * 10))
-          echo "Waiting ${sleep_time}s before next attempt..."
-          sleep $sleep_time
-        done
-        
-        echo "All attempts failed"
-        exit 1
+        # Run tests with increased timeouts and retries
+        ./node_modules/.bin/mocha \
+          --timeout 30000 \
+          --retries 2 \
+          --require ./test/setup.js \
+          --exit \
+          src/test/**/*.test.js
     - name: Build
       working-directory: ./${{ matrix.service }}
       run: npm run build --if-present

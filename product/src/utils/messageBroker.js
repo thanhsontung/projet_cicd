@@ -11,10 +11,10 @@ class MessageBroker {
     setTimeout(async () => {
       // sửa rabbitmq:5672 thành rabbitmq:5672
       try {
-        const connection = await amqp.connect(process.env.RABBITMQ_URL || "amqp://rabbitmq:5672");
+        const connection = await amqp.connect("amqp://rabbitmq:5672");
         this.channel = await connection.createChannel();
         await this.channel.assertQueue("products");
-        console.log("RabbitMQ connected using", process.env.RABBITMQ_URL || "amqp://rabbitmq:5672");
+        console.log("RabbitMQ connected");
       } catch (err) {
         console.error("Failed to connect to RabbitMQ:", err.message);
       }
