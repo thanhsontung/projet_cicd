@@ -20,6 +20,7 @@ jobs:
         image: rabbitmq:3.8-management-alpine
         ports:
           - 5672:5672
+          - 15672:15672
 
     strategy:
       matrix:
@@ -78,8 +79,9 @@ jobs:
         elapsed=0
 
         check_ports() {
-          # Check AMQP port and management port to ensure RabbitMQ is fully up
-          nc -z localhost 27017 >/dev/null 2>&1 && nc -z localhost 5672 >/dev/null 2>&1 && nc -z localhost 15672 >/dev/null 2>&1
+          # Check AMQP port (5672) and MongoDB (27017). The RabbitMQ management port
+          # (15672) may not be mapped to the runner, so don't require it here.
+          nc -z localhost 27017 >/dev/null 2>&1 && nc -z localhost 5672 >/dev/null 2>&1
         }
 
         while [ $elapsed -lt $timeout ]; do
