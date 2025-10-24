@@ -15,12 +15,26 @@ jobs:
         image: mongo:6
         ports:
           - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          --health-start-period 20s
       
       rabbitmq:
         image: rabbitmq:3.8-management-alpine
         ports:
           - 5672:5672
           - 15672:15672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          --health-start-period 30s
+        env:
+          RABBITMQ_NODENAME: rabbit@localhost
 
     strategy:
       matrix:
@@ -71,32 +85,30 @@ jobs:
           echo "No package.json found; skipping mocha check"
         fi
 
-    - name: Wait for MongoDB and RabbitMQ to be ready
+    - name: Check service status
       run: |
-        echo "Waiting for MongoDB (27017) and RabbitMQ (5672) to accept connections..."
-        timeout=180
-        interval=2
-        elapsed=0
-
-        check_ports() {
-          # Check AMQP port (5672) and MongoDB (27017). The RabbitMQ management port
-          # (15672) may not be mapped to the runner, so don't require it here.
-          nc -z localhost 27017 >/dev/null 2>&1 && nc -z localhost 5672 >/dev/null 2>&1
-        }
-
-        while [ $elapsed -lt $timeout ]; do
-          if check_ports; then
-            echo "Both services are reachable"
-            exit 0
-          fi
-          sleep $interval
-          elapsed=$((elapsed + interval))
-        done
-
-        echo "Timeout waiting for MongoDB/RabbitMQ after ${timeout}s"
-        echo "Docker ps output:"
-        docker ps --no-trunc || true
-        exit 1
+        echo "=== Checking MongoDB ==="
+        echo "MongoDB ports:"
+        ss -ltn | grep 27017 || true
+        echo "MongoDB status:"
+        mongosh --eval "db.serverStatus()" || true
+        
+        echo -e "\n=== Checking RabbitMQ ==="
+        echo "RabbitMQ ports:"
+        ss -ltn | grep 5672 || true
+        ss -ltn | grep 15672 || true
+        echo "RabbitMQ status:"
+        rabbitmqctl status || true
+        
+        echo -e "\n=== Docker Status ==="
+        docker ps
+        
+        # Verify connections work
+        echo -e "\n=== Testing Connections ==="
+        timeout 5 bash -c 'until mongosh --eval "db.runCommand({ ping: 1 })" >/dev/null 2>&1; do sleep 1; done'
+        echo "✓ MongoDB accepting connections"
+        timeout 5 bash -c 'until rabbitmqctl ping >/dev/null 2>&1; do sleep 1; done'
+        echo "✓ RabbitMQ accepting connections"
 
     - name: Run tests
       working-directory: ./${{ matrix.service }}
