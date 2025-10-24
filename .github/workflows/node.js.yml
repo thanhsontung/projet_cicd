@@ -58,6 +58,8 @@ jobs:
       run: npm run lint --if-present
       continue-on-error: true
 
+    - name: Install Mocha globally
+      run: npm install -g mocha
     - name: Run tests
       working-directory: ./${{ matrix.service }}
       run: npm test
