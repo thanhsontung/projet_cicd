@@ -73,7 +73,7 @@ class ProductController {
       // Long polling until order is completed
       let order = this.ordersMap.get(orderId);
       while (order.status !== 'completed') {
-        await new Promise(resolve => setTimeout(resolve, 1000)); // wait for 1 second before checking status again
+        await new Promise(resolve => setTimeout(resolve, 4000)); // wait for 1 second before checking status again
         order = this.ordersMap.get(orderId);
       }
   

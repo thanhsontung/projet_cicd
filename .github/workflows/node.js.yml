@@ -126,7 +126,7 @@ jobs:
       env:
         NODE_ENV: test
         MONGODB_URL: "mongodb://localhost:27017/test"
-        RABBITMQ_URL: "amqp://localhost:5672"
+        RABBITMQ_URL: "amqp://guest:guest@localhost:5672"
       run: |
         echo "MONGODB_URL=$MONGODB_URL"
         echo "RABBITMQ_URL=$RABBITMQ_URL"
