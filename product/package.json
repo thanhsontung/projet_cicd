@@ -6,6 +6,7 @@
   "scripts": {
     "test": "mocha --timeout 20000 src/test/**/*.test.js --exit",
     "start": "node index.js"
+    
   },
   "keywords": [],
   "author": "",
