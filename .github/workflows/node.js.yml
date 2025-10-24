@@ -70,6 +70,31 @@ jobs:
           echo "No package.json found; skipping mocha check"
         fi
 
+    - name: Wait for MongoDB and RabbitMQ to be ready
+      run: |
+        echo "Waiting for MongoDB (27017) and RabbitMQ (5672) to accept connections..."
+        timeout=120
+        interval=2
+        elapsed=0
+
+        check_ports() {
+          nc -z localhost 27017 >/dev/null 2>&1 && nc -z localhost 5672 >/dev/null 2>&1
+        }
+
+        while [ $elapsed -lt $timeout ]; do
+          if check_ports; then
+            echo "Both services are reachable"
+            exit 0
+          fi
+          sleep $interval
+          elapsed=$((elapsed + interval))
+        done
+
+        echo "Timeout waiting for MongoDB/RabbitMQ after ${timeout}s"
+        echo "Docker ps output:"
+        docker ps --no-trunc || true
+        exit 1
+
     - name: Run tests
       working-directory: ./${{ matrix.service }}
       env:
