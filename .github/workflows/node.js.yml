@@ -40,10 +40,46 @@ jobs:
       working-directory: ./${{ matrix.service }}
       run: npm ci
 
+    - name: Ensure test dev-deps present (chai, chai-http)
+      working-directory: ./${{ matrix.service }}
+      run: |
+        # Some runners or npm configs may skip devDependencies; ensure chai is available for tests.
+        if [ -f package.json ]; then
+          if ! npm ls chai >/dev/null 2>&1; then
+            echo "chai not found in node_modules — installing test devDependencies"
+            npm install chai chai-http --no-save
+          else
+            echo "chai present"
+          fi
+        else
+          echo "No package.json found; skipping test dep check"
+        fi
+
+    - name: Ensure mocha is available for tests
+      working-directory: ./${{ matrix.service }}
+      run: |
+        # Some environments don't install devDependencies; ensure mocha binary is available.
+        if [ -f package.json ]; then
+          if ! npm ls mocha >/dev/null 2>&1; then
+            echo "mocha not found in node_modules — installing mocha locally"
+            npm install mocha --no-save
+          else
+            echo "mocha present"
+          fi
+        else
+          echo "No package.json found; skipping mocha check"
+        fi
+
     - name: Run tests
       working-directory: ./${{ matrix.service }}
-      run: npm test --if-present || echo "No test for ${{ matrix.service }}"
-
+      env:
+        NODE_ENV: test
+        MONGODB_URL: "mongodb://localhost:27017/test"
+        RABBITMQ_URL: "amqp://rabbitmq:5672"
+      run: |
+        echo "MONGODB_URL=$MONGODB_URL"
+        echo "RABBITMQ_URL=$RABBITMQ_URL"
+        npm test
     - name: Build
       working-directory: ./${{ matrix.service }}
       run: npm run build --if-present
