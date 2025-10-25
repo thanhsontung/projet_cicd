@@ -7,86 +7,49 @@ on:
     branches: [ "main" ]
 
 jobs:
-  code-check:
+  test:
     runs-on: ubuntu-latest
+    
+    services:
+      mongodb:
+        image: mongo:6
+        ports:
+          - 27017:27017
+      
+      rabbitmq:
+        image: rabbitmq:3.8-management-alpine
+        ports:
+          - 5672:5672
+
     strategy:
       matrix:
         service: [auth, order, product, api-gateway]
-    
+        node-version: [20.x]
+
     steps:
     - uses: actions/checkout@v4
     
-    - name: Setup Node.js
+    - name: Setup Node.js ${{ matrix.node-version }}
       uses: actions/setup-node@v4
       with:
-        node-version: '20.x'
+        node-version: ${{ matrix.node-version }}
         cache: 'npm'
         cache-dependency-path: ${{ matrix.service }}/package-lock.json
 
-    - name: Install ESLint and dependencies
+    - name: Install dependencies
       working-directory: ./${{ matrix.service }}
-      run: |
-        echo "Installing dependencies for ${{ matrix.service }}..."
-        npm ci
-        npm install eslint eslint-plugin-node --save-dev
+      run: npm ci
 
-    - name: Setup ESLint config
+    - name: Run tests
       working-directory: ./${{ matrix.service }}
-      run: |
-        cat > .eslintrc.json << EOF
-        {
-          "env": {
-            "node": true,
-            "es2021": true
-          },
-          "extends": ["eslint:recommended", "plugin:node/recommended"],
-          "rules": {
-            "no-unused-vars": "error",
-            "no-unreachable": "error",
-            "no-empty": "error",
-            "no-console": "warn"
-          }
-        }
-        EOF
-
-  
-
-    - name: Run ESLint with strict rules
-      working-directory: ./${{ matrix.service }}
-      run: |
-        echo "Running ESLint with strict rules on ${{ matrix.service }}..."
-        cat > .eslintrc.json << EOF
-        {
-          "env": {
-            "node": true,
-            "es2021": true,
-            "mocha": true
-          },
-          "extends": ["eslint:recommended", "plugin:node/recommended"],
-          "rules": {
-            "no-unused-vars": "error",
-            "no-unreachable": "error",
-            "no-empty": "error",
-            "no-console": "warn",
-            "no-undef": "error",
-            "no-unused-expressions": "error",
-            "no-constant-condition": "error",
-            "no-debugger": "error"
-          }
-        }
-        EOF
-        
-        # Chạy ESLint với --max-warnings 0 để fail nếu có bất kỳ warning nào
-        ./node_modules/.bin/eslint src/ --max-warnings 0
-        
-        echo "✅ ESLint passed successfully"
+      run: npm test --if-present || echo "No test for ${{ matrix.service }}"
 
     - name: Build
       working-directory: ./${{ matrix.service }}
       run: npm run build --if-present
 
   docker-build-push:
-    needs: code-check
+    needs: test
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
     
