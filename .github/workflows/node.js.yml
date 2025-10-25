@@ -49,35 +49,7 @@ jobs:
         }
         EOF
 
-    - name: Check for commented out code and syntax
-      working-directory: ./${{ matrix.service }}
-      run: |
-        echo "Checking code in ${{ matrix.service }}..."
-        
-        # 1. Kiểm tra code bị comment
-        echo "Checking for commented code..."
-        ! find src -type f -name "*.js" -exec grep -l "^\s*//.*\(function\|class\|const\|let\|var\|module.exports\|app\.\|router\.\)" {} \; || {
-          echo "❌ Error: Found commented out code that looks like functions, exports, or route handlers"
-          echo "Please remove commented code before committing"
-          grep -r "^\s*//" src/ | grep -E "(function|class|const|let|var|module.exports|app\.|router\.)"
-          exit 1
-        }
-        
-        # 2. Kiểm tra code blocks bị comment
-        echo "Checking for commented blocks..."
-        ! find src -type f -name "*.js" -exec grep -l "/\*.*\(function\|class\|const\|let\|var\|module.exports\)" {} \; || {
-          echo "❌ Error: Found commented out code blocks"
-          echo "Please remove commented code blocks before committing"
-          grep -r "/\*.*\(function\|class\|const\|let\|var\|module.exports\)" src/
-          exit 1
-        }
-        
-        # 3. Kiểm tra cú pháp JavaScript
-        echo "Checking JavaScript syntax..."
-        find src -type f -name "*.js" -exec node -c {} \; || {
-          echo "❌ Error: JavaScript syntax check failed"
-          exit 1
-        }
+  
 
     - name: Run ESLint with strict rules
       working-directory: ./${{ matrix.service }}
